@@ -316,7 +316,6 @@ torch.set_float32_matmul_precision('high')
 #logits
 model = GPT(GPTConfig(vocab_size = 50304))
 model.to(device)
-model = torch.compile(model)
 if ddp:
     model = DDP(model, device_ids=[ddp_local_rank]) 
 raw_model = model.module if ddp else model
