@@ -79,13 +79,13 @@ Fixed: n_embd=768, n_head=12, T=1024, B=4
 
 | n_layer | params_M | latency_ms | peak_mb | ms/layer |
 |---------|----------|------------|---------|----------|
-| 6       |          |            |         |          |
-| 12      |          |            |         |          |
-| 24      |          |            |         |          |
+| 6       | 120.6    | 4.46       | 1238.1  | 0.74     |
+| 12      | 163.1    | 7.38       | 1912.6  | 0.62     |
+| 24      | 248.2    | 12.05      | 3258.7  | 0.50     |
 
-**Expected:** latency scales linearly with n_layer; ms/layer stays constant.
+**Actual vs expected:** latency grows ~1.65x per layer doubling, not 2x. `ms/layer` *decreases* from 0.74 → 0.50 as depth grows. This is GPU efficiency improving with more sequential work to pipeline — the kernel launch and memory access overhead gets amortized across more layers.
 
-**Key insight:** Adding layers is O(n_layer) in compute. The O(n²) from attention is *within* each layer at fixed T — it doesn't compound across layers. Doubling layers doubles cost. Doubling T quadruples cost per layer *and* across all layers.
+**Key insight:** Adding layers is O(n_layer) in compute, but sub-linear in practice due to GPU utilization. The O(n²) from attention is *within* each layer at fixed T — it doesn't compound across layers. Contrast: doubling T in experiment 1 gave 4.91x memory growth. Doubling layers here gives only 1.55–1.70x memory growth. Sequence length is far more expensive to scale than depth.
 
 ---
 
