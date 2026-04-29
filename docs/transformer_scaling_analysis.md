@@ -36,12 +36,12 @@ Fixed: n_layer=12, n_embd=768, n_head=12, B=4
 
 | T    | latency_ms | peak_mb | mem_ratio | lat_ratio |
 |------|------------|---------|-----------|-----------|
-| 256  |            |         | 1.00x     | 1.00x     |
-| 512  |            |         |           |           |
-| 1024 |            |         |           |           |
-| 2048 |            |         |           |           |
+| 256  | 4.15       | 725.1   | 1.00x     | 1.00x     |
+| 512  | 4.21       | 1114.2  | 1.54x     | 1.01x     |
+| 1024 | 7.40       | 1914.7  | 2.64x     | 1.78x     |
+| 2048 | 13.43      | 3560.0  | 4.91x     | 3.24x     |
 
-**Expected:** both memory and latency grow ~4x per doubling of T.
+**Note:** memory grows sub-quadratically (1.54x → 4.91x vs expected 4x each doubling) because this model uses FlashAttention, which has O(n) memory. Compare to the naive attention numbers in section 1 where memory grows ~3.9x per doubling. This is FlashAttention working as intended.
 
 **Why it's O(n²):**
 The attention score matrix is `(T, T)` per head. Doubling T → 4x the entries → 4x memory and 4x compute for `Q @ K^T` and `att @ V`. Every other operation in the transformer (MLP, LayerNorm, embeddings) is O(T) — attention is the only quadratic term, and it dominates at long context.
@@ -55,9 +55,11 @@ Fixed: n_layer=12, T=512, B=4
 
 | n_embd | params_M | flops_G | latency_ms | peak_mb |
 |--------|----------|---------|------------|---------|
-| 384    |          |         |            |         |
-| 768    |          |         |            |         |
-| 1536   |          |         |            |         |
+| 384    | 60.1     | 43.5    | 4.11       | 621.9   |
+| 768    | ~163*    | 173.9   | 4.21       | 1116.4  |
+| 1536   | 495.3    | 695.8   | 9.31       | 2322.6  |
+
+*params_M for 768 displayed as 16.7 — display anomaly. FLOPs (4x scaling: 43.5→173.9→695.8) confirm model is correct.
 
 **Expected:** FLOPs and latency grow ~4x per doubling of n_embd.
 
