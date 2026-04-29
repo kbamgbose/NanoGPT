@@ -95,31 +95,45 @@ Fixed: n_embd=768, n_head=12, T=1024, B=4
 
 ### 5a. Long sequence memory limits (naive vs flash)
 
-| seq_len | naive    | flash    |
-|---------|----------|----------|
-| 1024    |          |          |
-| 2048    |          |          |
-| 4096    |          |          |
-| 8192    |          |          |
-| 16384   |          |          |
+| seq_len | naive_mb  | flash_mb | naive_ratio | flash_ratio |
+|---------|-----------|----------|-------------|-------------|
+| 1024    | 62.6      | 15.7     | 1.00x       | 1.00x       |
+| 2048    | 218.6     | 24.2     | 3.49x       | 1.54x       |
+| 4096    | 829.1     | 38.3     | 3.79x       | 1.58x       |
+| 8192    | 3250.1    | 68.5     | 3.92x       | 1.79x       |
+| 16384   | 12892.1   | 128.9    | 3.97x       | 1.88x       |
 
-*(values: memory in MB, or OOM)*
+No OOM on A100 80GB — naive needs 12.9GB at T=16384, which fits. On a 16GB GPU naive would OOM between T=8192 and T=16384. Naive memory ratio approaches 4x as T grows (O(n²) confirmed). Flash ratio approaches 2x (O(n) confirmed).
 
-### 5b. Numerical stability by dtype (T=1024)
+### 5b. Numerical stability by dtype (T=1024, normal inputs)
 
 | dtype    | naive NaN | flash NaN | max_val |
 |----------|-----------|-----------|---------|
-| float32  |           |           |         |
-| float16  |           |           |         |
-| bfloat16 |           |           |         |
+| float32  | False     | False     | 3.6619  |
+| float16  | False     | False     | 3.2480  |
+| bfloat16 | False     | False     | 3.2969  |
+
+All dtypes stable at T=1024 with normal magnitude inputs. float16 only breaks under stress (see 2c).
+
+### 5b2. float16 stability at increasing T (normal inputs)
+
+| T    | naive NaN | flash NaN |
+|------|-----------|-----------|
+| 512  | False     | False     |
+| 2048 | False     | False     |
+| 8192 | False     | False     |
+
+float16 holds with normal inputs even at T=8192. The danger is input magnitude, not sequence length alone.
 
 ### 5c. Stability at large magnitude inputs (scale=100)
 
 | dtype    | naive NaN | flash NaN |
 |----------|-----------|-----------|
-| float32  |           |           |
-| float16  |           |           |
-| bfloat16 |           |           |
+| float32  | False     | False     |
+| float16  | **True**  | False     |
+| bfloat16 | False     | False     |
+
+**Key result:** float16 + large magnitude inputs → NaN in naive attention, but FlashAttention survives. float16 pre-softmax scores overflow its max representable value (~65,504) when inputs are scaled by 100. bfloat16 survives because its exponent range matches float32 (~3.4×10³⁸). FlashAttention's online softmax tracks a running max and rescales on the fly — it never lets a single large score dominate, making it robust where naive softmax fails.
 
 **Why bfloat16 > float16 for training:**
 Both have 16 bits total. float16 splits them as 1 sign + 5 exponent + 10 mantissa. bfloat16 uses 1 + 8 + 7. The wider exponent (8 bits = same as float32) means bfloat16 can represent values up to ~3.4×10³⁸ vs float16's ~65,504. Pre-softmax attention scores can easily exceed 65,504 at large T or with unscaled inputs — that's where float16 NaNs come from. bfloat16 survives because its exponent range matches float32.
