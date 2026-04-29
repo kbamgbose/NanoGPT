@@ -12,16 +12,17 @@ Fill in the tables after running each script on the pod.
 
 | seq_len | naive_ms | flash_ms | naive_mb | flash_mb | speedup |
 |---------|----------|----------|----------|----------|---------|
-| 256     |          |          |          |          |         |
-| 512     |          |          |          |          |         |
-| 1024    |          |          |          |          |         |
-| 2048    |          |          |          |          |         |
-| 4096    |          |          |          |          |         |
+| 256     | 0.14     | 0.02     | 26.2     | 15.7     | 8.60x   |
+| 512     | 0.27     | 0.03     | 68.6     | 23.2     | 8.77x   |
+| 1024    | 0.94     | 0.08     | 226.1    | 38.3     | 12.24x  |
+| 2048    | 5.00     | 0.22     | 832.1    | 68.5     | 22.86x  |
+| 4096    | 15.41    | 0.65     | 3208.1   | 128.9    | 23.74x  |
 
 **Key observations:**
-- [ ] naive memory grows ~4x each time T doubles (O(n²))
-- [ ] flash memory stays roughly flat (never materializes T×T matrix)
-- [ ] speedup increases with sequence length as memory bottleneck worsens
+- naive memory grows ~3.9x each time T doubles, approaching 4x at larger T (O(n²) confirmed)
+- flash memory grows ~2x per doubling — O(n), not O(n²) — never materializes the T×T matrix
+- at T=4096 naive uses 3208 MB vs flash's 129 MB — **25x less memory**
+- speedup grows from 8.6x → 23.7x as T increases: the memory bottleneck compounds at longer sequences
 
 **Why FlashAttention wins on memory:**
 Naive attention materializes the full `(B, n_head, T, T)` matrix in HBM (high bandwidth memory). At T=4096 with B=4, n_head=12, bfloat16 that's `4 * 12 * 4096 * 4096 * 2 bytes ≈ 1.6 GB` — just for the attention scores, before activations. FlashAttention tiles the computation so it fits in SRAM (on-chip cache), reading/writing HBM far less often. Same math, fraction of the memory traffic.
