@@ -6,96 +6,17 @@ Documents the O(n²) attention cost compounding across layers.
 Run on the pod:
     python profiling/block_size_experiment.py
 """
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
 import torch
-import torch.nn as nn
-from torch.nn import functional as F
-from dataclasses import dataclass
+from model import GPT, GPTConfig
 
 DEVICE = "cuda"
 DTYPE  = torch.bfloat16
 RUNS   = 10
 WARMUP = 3
-
-# ── model (same as scaling_experiment.py) ─────────────────────────────────────
-
-@dataclass
-class GPTConfig:
-    block_size: int = 1024
-    vocab_size: int = 50304
-    n_layer:    int = 12
-    n_head:     int = 12
-    n_embd:     int = 768
-
-
-class CausalSelfAttention(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
-        self.c_proj = nn.Linear(config.n_embd, config.n_embd)
-        self.n_head = config.n_head
-        self.n_embd = config.n_embd
-        self.register_buffer(
-            "bias",
-            torch.tril(torch.ones(config.block_size, config.block_size))
-            .view(1, 1, config.block_size, config.block_size)
-        )
-
-    def forward(self, x):
-        B, T, C = x.size()
-        hs = C // self.n_head
-        qkv = self.c_attn(x)
-        q, k, v = qkv.split(self.n_embd, dim=2)
-        q = q.view(B, T, self.n_head, hs).transpose(1, 2)
-        k = k.view(B, T, self.n_head, hs).transpose(1, 2)
-        v = v.view(B, T, self.n_head, hs).transpose(1, 2)
-        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
-        y = y.transpose(1, 2).contiguous().view(B, T, C)
-        return self.c_proj(y)
-
-
-class MLP(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.c_fc   = nn.Linear(config.n_embd, 4 * config.n_embd)
-        self.gelu   = nn.GELU(approximate='tanh')
-        self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd)
-
-    def forward(self, x):
-        return self.c_proj(self.gelu(self.c_fc(x)))
-
-
-class Block(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.ln_1 = nn.LayerNorm(config.n_embd)
-        self.attn = CausalSelfAttention(config)
-        self.ln_2 = nn.LayerNorm(config.n_embd)
-        self.mlp  = MLP(config)
-
-    def forward(self, x):
-        x = x + self.attn(self.ln_1(x))
-        x = x + self.mlp(self.ln_2(x))
-        return x
-
-
-class GPT(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.transformer = nn.ModuleDict(dict(
-            wte  = nn.Embedding(config.vocab_size, config.n_embd),
-            wpe  = nn.Embedding(config.block_size, config.n_embd),
-            h    = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
-            ln_f = nn.LayerNorm(config.n_embd),
-        ))
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-
-    def forward(self, idx):
-        B, T = idx.size()
-        pos = torch.arange(T, device=idx.device)
-        x = self.transformer.wte(idx) + self.transformer.wpe(pos)
-        for block in self.transformer.h:
-            x = block(x)
-        return self.lm_head(self.transformer.ln_f(x))
 
 
 # ── benchmark ─────────────────────────────────────────────────────────────────
@@ -136,7 +57,7 @@ def run():
     base_ms = None
 
     for n_layer in layer_counts:
-        config = GPTConfig(block_size=T, n_layer=n_layer, n_embd=768, n_head=12)
+        config = GPTConfig(block_size=T, vocab_size=50304, n_layer=n_layer, n_embd=768, n_head=12)
         model  = GPT(config).to(DEVICE).to(DTYPE)
         idx    = torch.randint(0, config.vocab_size, (B, T), device=DEVICE)
         params = sum(p.numel() for p in model.parameters()) / 1e6
